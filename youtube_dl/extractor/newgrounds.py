@@ -27,15 +27,17 @@ class NewgroundsIE(InfoExtractor):
             'duration': 143,
         },
     }, {
-        'url': 'https://www.newgrounds.com/portal/view/673111',
-        'md5': '3394735822aab2478c31b1004fe5e5bc',
+        'url': 'https://www.newgrounds.com/portal/view/830258',
         'info_dict': {
-            'id': '673111',
+            'id': '830258',
             'ext': 'mp4',
-            'title': 'Dancin',
-            'uploader': 'Squirrelman82',
-            'timestamp': 1460256780,
-            'upload_date': '20160410',
+            'title': 'moving in (Teddy and Ben)',
+            'uploader': 'wavetro',
+            'timestamp': 1642860000,
+            'upload_date': '20220122',
+        },
+        'params': {
+            'skip_download': True,
         },
     }, {
         # source format unavailable, additional mp4 formats
@@ -44,7 +46,7 @@ class NewgroundsIE(InfoExtractor):
             'id': '689400',
             'ext': 'mp4',
             'title': 'ZTV News Episode 8',
-            'uploader': 'BennettTheSage',
+            'uploader': 'ZONE-SAMA',
             'timestamp': 1487965140,
             'upload_date': '20170224',
         },
@@ -61,44 +63,65 @@ class NewgroundsIE(InfoExtractor):
         title = self._html_search_regex(
             r'<title>([^>]+)</title>', webpage, 'title')
 
-        media_url = self._parse_json(self._search_regex(
-            r'"url"\s*:\s*("[^"]+"),', webpage, ''), media_id)
+        is_audio = '/audio/listen/' in url
+        if is_audio:
+            media_url = self._og_search_property(
+                'audio', webpage, 'media URL', fatal=False)
+            if not media_url:
+                media_url = self._parse_json(self._search_regex(
+                    r'"url"\s*:\s*("[^"]+"),', webpage, ''), media_id)
+            formats = [{
+                'url': media_url,
+                'format_id': 'source',
+                'quality': 1,
+            }]
+            uploader = self._html_search_regex(
+                (r'(?s)<h4[^>]*>(.+?)</h4>.*?<em>\s*Author\s*</em>',
+                 r'(?:Author|Writer)\s*<a[^>]+>([^<]+)',
+                 r"""['"]author['"]\s*:\s*["']([^"']+)"""),
+                webpage, 'uploader', fatal=False)
+        else:
+            video = self._download_json(
+                'https://www.newgrounds.com/portal/video/%s' % media_id,
+                media_id, headers={'X-Requested-With': 'XMLHttpRequest'})
+            if video.get('error'):
+                self.raise_no_formats(
+                    video['error'].get('msg') or 'No video found',
+                    expected=True, video_id=media_id)
 
-        formats = [{
-            'url': media_url,
-            'format_id': 'source',
-            'quality': 1,
-        }]
-
-        max_resolution = int_or_none(self._search_regex(
-            r'max_resolution["\']\s*:\s*(\d+)', webpage, 'max resolution',
-            default=None))
-        if max_resolution:
-            url_base = media_url.rpartition('.')[0]
-            for resolution in (360, 720, 1080):
-                if resolution > max_resolution:
-                    break
-                formats.append({
-                    'url': '%s.%dp.mp4' % (url_base, resolution),
-                    'format_id': '%dp' % resolution,
-                    'height': resolution,
-                })
+            formats = []
+            for format_id, sources in (video.get('sources') or {}).items():
+                height = int_or_none(
+                    format_id[:-1]) if format_id.endswith('p') else None
+                for source in sources:
+                    formats.append({
+                        'url': source['src'],
+                        'format_id': format_id,
+                        'height': height,
+                    })
+            if not formats:
+                self.raise_no_formats(
+                    'No video sources found', expected=True, video_id=media_id)
+            uploader = video.get('author')
 
         self._check_formats(formats, media_id)
         self._sort_formats(formats)
 
-        uploader = self._html_search_regex(
-            (r'(?s)<h4[^>]*>(.+?)</h4>.*?<em>\s*Author\s*</em>',
-             r'(?:Author|Writer)\s*<a[^>]+>([^<]+)'), webpage, 'uploader',
-            fatal=False)
-
         timestamp = unified_timestamp(self._html_search_regex(
             (r'<dt>\s*Uploaded\s*</dt>\s*<dd>([^<]+</dd>\s*<dd>[^<]+)',
-             r'<dt>\s*Uploaded\s*</dt>\s*<dd>([^<]+)'), webpage, 'timestamp',
+             r'<dt>\s*Uploaded\s*</dt>\s*<dd>([^<]+)',
+             r'(?s)<dt[^>]*>\s*Uploaded\s*</dt>\s*<dd[^>]*>.*?(<span[^>]+class=["\'][^"\']*\bvalue\b[^"\']*["\'][^>]*>[^<]+</span>\s*<span[^>]+class=["\'][^"\']*\bvalue\b[^"\']*["\'][^>]*>[^<]+</span>)',
+             r'<meta[^>]+itemprop=["\']uploadDate["\'][^>]+content=["\']([^"\']+)'),
+            webpage, 'timestamp',
             default=None))
+        duration_regex = (
+            r'(?s)<dd>\s*Song\s*</dd>\s*<dd>.+?</dd>\s*<dd>([^<]+)')
+        if is_audio:
+            duration_regex = (
+                duration_regex,
+                r"""['"]duration['"]\s*:\s*([0-9.]+)""")
         duration = parse_duration(self._search_regex(
-            r'(?s)<dd>\s*Song\s*</dd>\s*<dd>.+?</dd>\s*<dd>([^<]+)', webpage,
-            'duration', default=None))
+            duration_regex, webpage, 'duration', default=None))
 
         filesize_approx = parse_filesize(self._html_search_regex(
             r'(?s)<dd>\s*Song\s*</dd>\s*<dd>(.+?)</dd>', webpage, 'filesize',
